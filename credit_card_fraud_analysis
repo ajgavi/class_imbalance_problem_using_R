@@ -1,0 +1,136 @@
+# First we Load the ROCR library that provides the Machine Learning algorithms.If we get error as package not found,we can download the required packages in R Studio
+library(gplots, warn.conflicts = FALSE)
+library("ROCR")
+library("PRROC")
+##------------------DATA COLLECTION-----------------##########
+##Load the data .Read the data from the creditcard.csv file
+data <- read.csv(file.choose())
+creditdata <- data[,c(1,31,30,2:29)]
+view(creditdata)
+
+##Setting a working directory in R
+setwd("F:/Credit Card")
+
+####-------DATA ANALYSIS--------------#####
+rowsTotal <- nrow(creditdata)
+fraudRowsTotal <- nrow(data[data$Class == 1,])
+nonfraudRowsTotal <- nrow(data[data$Class == 0,])
+##Dataset consist of numeric value of 28 PCA tranformed columns,since its a confidential data.Time and Amount are not transformed values
+creditdata
+#Removing time column as it has no significance in modelling
+creditdata <- creditdata[, !(names(data) == "Time")]
+head(creditdata,4)
+###----------------DATA MODELLING------------#######
+#---------TRAIN/TEST DATASET PROCESS---------------
+####Best Practice ideally is to follow 70:30 ratio for train test data percentage
+trainPercent <- 0.7
+testPercent <- 0.3
+dataTrainLen <- floor(trainPercent * rowsTotal)
+datatestLen <- rowsTotal - dataTrainLen
+head(dataTrainLen,10)
+#Seperating the training data and the test data
+creditdata.train <- data[1:dataTrainLen,]   #
+creditdata.test <- data[(dataTrainLen+1):rowsTotal,]
+head(creditdata.train,2)
+rownames(creditdata.test) <- NULL
+head(creditdata.test,1)
+##Total number of fraud and non fraud rows in test data
+fraudRows <- nrow(creditdata.test[creditdata.test$Class == 1,])
+nonfraudRows <- datatestLen - fraudRows
+
+##Method to find the accuracy of a model that predict all the cases as non-fraud
+AccuracyBase = nonfraudRows/datatestLen
+  
+#Creating a model table for storing the various measures of the accuracy of the model
+modelMetric <- data.frame(Column_Range=character(),TP_Bal=integer(),FP_Bal=integer(),Cutoff_Bal=double(),
+Accuracy_Bal=double(),TP_Max=integer(),FP_Max=integer(),Cutoff_Max=double(),Accuracy_Max=double(),
+TP_Mid=integer(),FP_Mid=integer(),Cutoff_Mid=double(),Accuracy_Mid=double(),Accuracy_Base=double(),
+AUC=double(),AUPRC=double(),stringsAsFactors = FALSE)
+
+###Using Binomial Logistic Regression Algorithm implementation of the R Package.
+# ----Getting the test data and training data for current iteration
+
+creditdata.iter.train <- creditdata.train[1:ncol(creditdata)]
+creditdata.iter.test <- creditdata.train[1:ncol(creditdata)]
+head(creditdata.train[,1:ncol(creditdata)],1)
+
+#Modelling the data
+model <- glm(formula = Class~,family=binomial(link="logit"),data=creditdata.iter.train)
+
+# Classifying the test data on the basis of the above model
+p <- predict(model, newdata=subset(data.iter.test), type="response")
+
+# Predicting the cutoff probabilities for the predicted values
+pr <- prediction(p, data.iter.test$Class)
+
+# Compute area under the ROC curve (Output of AUC is cutoff-independent)
+auc <- performance(pr, measure = "auc")
+auc <- auc@y.values[[1]]
+
+prc_dataFrame <- data.frame(p, data.iter.test$Class)
+prc <- pr.curve(prc_dataFrame[prc_dataFrame$data.iter.test.Class == 1,]$p, prc_dataFrame[prc_dataFrame$data.iter.test.Class == 0,]$p)
+# Retrieving the values from the prediction model
+cutoffs <- pr@cutoffs[[1]]
+tp <- pr@tp[[1]]
+tn <- pr@tn[[1]]
+fn <- pr@fn[[1]]
+fp <- pr@fp[[1]]
+
+maxTpIndex <- 0
+maxSpecSensIndex <- 1
+maxSensSpecThreshold <- 0
+midCutoffIndex <- 0
+
+# Iterating through the cutoff values in the predicted outcome to find the cutoff probability
+for(i in seq_along(cutoffs)) {
+  sensitivity <- tp[i]/fraudRows
+  specificity <- tn[i]/nonFraudRows
+  sensSpecThreshold <- sensitivity + specificity
+  if(sensSpecThreshold > maxSensSpecThreshold) {
+    maxSensSpecThreshold <- sensSpecThreshold
+    maxSpecSensIndex <- i
+  }
+  
+  if(sensitivity == 1 && maxTpIndex == 0){
+    maxTpIndex <- i
+  } 
+  
+  if(cutoffs[i][[1]] < 0.5 && midCutoffIndex == 0) {
+    midCutoffIndex <- i
+  }
+}
+
+# Retreieving the cutoff probability at which the sensitivity - specificity threshold is maximum
+thresholdProb <- cutoffs[maxSpecSensIndex]
+# Graph data for plotting the sensitivity and specificity curves and saving the plot
+graph_x = cutoffs
+graph_y1 = tp/fraudRows
+graph_y2 = tn/nonFraudRows
+
+par(mar=c(6,5,5,6)+0.5)
+plot(graph_x,graph_y1,type="l",col="red",yaxt="n",xlab="",ylab="", main="V1-V28")
+axis(2)
+par(new=TRUE)
+plot(graph_x, graph_y2,type="l",col="green",xaxt="n",yaxt="n",xlab="",ylab="")
+axis(4)
+mtext("Specificity",side=4,line=3)
+mtext("Sensitivity",side=2,line=3)
+mtext("Cutoff",side=1,line=3)
+legend("right",col=c("red","green"),lty=1,legend=c("Sensitivity","Specificity"))
+# Storing the model metrics
+modelMetric[1,1] = "Amount, V1 - V28"
+modelMetric[1,2] = tp[maxSpecSensIndex]
+modelMetric[1,3] = fp[maxSpecSensIndex]
+modelMetric[1,4] = cutoffs[maxSpecSensIndex]
+modelMetric[1,5] = (tp[maxSpecSensIndex] + tn[maxSpecSensIndex])/dataTestLen
+modelMetric[1,6] = tp[maxTpIndex]
+modelMetric[1,7] = fp[maxTpIndex]
+modelMetric[1,8] = cutoffs[maxTpIndex]
+modelMetric[1,9] = (tp[maxTpIndex] + tn[maxTpIndex])/dataTestLen
+modelMetric[1,10] = tp[midCutoffIndex]
+modelMetric[1,11] = fp[midCutoffIndex]
+modelMetric[1,12] = cutoffs[midCutoffIndex]
+modelMetric[1,13] = (tp[midCutoffIndex] + tn[midCutoffIndex])/dataTestLen
+modelMetric[1,14] = accuracyBase
+modelMetric[1,15] = auc
+modelMetric[1,16] = prc$auc.integral
